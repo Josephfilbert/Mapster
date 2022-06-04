@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore.Query.Internal;
 
 namespace Mapster.EFCore
 {
-    class MapsterQueryable : IQueryable
+    class MapsterQueryable : IOrderedQueryable
     {
         private readonly IQueryable _queryable;
         public MapsterQueryable(IQueryable queryable, IAdapterBuilder builder)
@@ -25,7 +25,7 @@ namespace Mapster.EFCore
         public Expression Expression => _queryable.Expression;
         public IQueryProvider Provider { get; }
     }
-    class MapsterQueryable<T> : MapsterQueryable, IQueryable<T>, IAsyncEnumerable<T>
+    class MapsterQueryable<T> : MapsterQueryable, IOrderedQueryable<T>, IAsyncEnumerable<T>
     {
         public MapsterQueryable(IQueryable<T> queryable, IAdapterBuilder builder) : 
             base(queryable, builder) { }
@@ -80,17 +80,28 @@ namespace Mapster.EFCore
 
         public TResult ExecuteAsync<TResult>(Expression expression, CancellationToken cancellationToken = default)
         {
-            var enumerable = ((IAsyncQueryProvider)_provider).ExecuteAsync<TResult>(expression, cancellationToken);
-            var enumerableType = typeof(TResult);
-            var elementType = enumerableType.GetGenericArguments()[0];
+            var result = ((IAsyncQueryProvider)_provider).ExecuteAsync<TResult>(expression, cancellationToken);
+            var resultType = typeof(TResult);
+            if (!IsAsyncEnumerableType(resultType))
+            {
+                return result;
+            }
+            
+            var elementType = resultType.GetGenericArguments()[0];
             var wrapType = typeof(MapsterAsyncEnumerable<>).MakeGenericType(elementType);
-            return (TResult) Activator.CreateInstance(wrapType, enumerable, _builder);
+            return (TResult) Activator.CreateInstance(wrapType, result, _builder);
         }
 
         public IAsyncEnumerable<TResult> ExecuteEnumerableAsync<TResult>(Expression expression, CancellationToken cancellationToken = default)
         {
             var enumerable = ((IAsyncQueryProvider)_provider).ExecuteAsync<IAsyncEnumerable<TResult>>(expression, cancellationToken);
             return new MapsterAsyncEnumerable<TResult>(enumerable, _builder);
+        }
+
+        private static bool IsAsyncEnumerableType(Type type)
+        {
+            return type.GetInterfaces()
+                .Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>));
         }
 
         //public IAsyncEnumerable<TResult> ExecuteAsync<TResult>(Expression expression)
